@@ -1,0 +1,188 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>System Design Lab: URL Shortener, Rate Limiter, Load Balancer</title>
+<style>
+:root{--bg:#f3f5f7;--ink:#17212b;--mute:#5d6b79;--line:#d5dce3;--card:#fff;--teal:#0e7c73;--amber:#b4540a;--red:#b42318;--blue:#1d4ed8;color-scheme:light}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.55 system-ui,-apple-system,"Segoe UI",sans-serif}
+main{max-width:860px;margin:0 auto;padding:28px 18px 60px}
+h1{font:700 1.7rem/1.2 Georgia,"Times New Roman",serif;margin:0 0 6px}
+p.lead{color:var(--mute);margin:0 0 22px;max-width:62ch}
+nav{display:flex;gap:6px;border-bottom:2px solid var(--line);margin-bottom:20px;flex-wrap:wrap}
+nav button{border:0;background:none;padding:10px 14px;font-weight:600;font-size:.95rem;font-family:inherit;color:var(--mute);cursor:pointer;border-bottom:3px solid transparent;margin-bottom:-2px}
+nav button[aria-selected=true]{color:var(--ink);border-color:var(--teal)}
+button:focus-visible,input:focus-visible,select:focus-visible{outline:3px solid var(--blue);outline-offset:2px}
+section{display:none}section.on{display:block}
+.card{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:16px;margin-bottom:14px}
+.card h3{margin:0 0 8px;font-size:1rem}
+.row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+input,select{font:inherit;padding:8px 10px;border:1px solid var(--line);border-radius:6px;background:#fff;color:var(--ink)}
+input.grow{flex:1;min-width:200px}
+.btn{font-weight:600;font-size:.95rem;font-family:inherit;border:0;border-radius:6px;padding:9px 14px;background:var(--teal);color:#fff;cursor:pointer}
+.btn.alt{background:#e6ebef;color:var(--ink)}
+.btn:disabled{opacity:.5;cursor:not-allowed}
+code,pre,.mono{font-family:ui-monospace,Consolas,Menlo,monospace;font-size:.86rem}
+pre{margin:0;background:#101820;color:#d6e2ec;padding:12px;border-radius:6px;overflow:auto;max-height:230px;white-space:pre-wrap}
+.ok{color:#6ee7b7}.bad{color:#fca5a5}.dim{color:#8fa3b5}
+table{width:100%;border-collapse:collapse;font-size:.9rem}
+td,th{text-align:left;padding:6px 8px;border-bottom:1px solid var(--line);word-break:break-all}
+.note{color:var(--mute);font-size:.88rem;margin:8px 0 0}
+.track{position:relative;height:46px;background:#e9eef2;border-radius:6px;overflow:hidden;margin:8px 0}
+.dot{position:absolute;top:10px;width:14px;height:26px;border-radius:3px;background:var(--teal)}
+.dot.blk{background:var(--red);opacity:.85}
+.srv{flex:1;min-width:170px;border:2px solid var(--line);border-radius:8px;padding:12px;text-align:center;background:#fff}
+.srv.hit{border-color:var(--teal);background:#e6f6f3}
+.srv.down{background:#f4e6e4;border-color:var(--red)}
+.srv b{display:block;font-size:1.1rem}
+.srv .n{font-size:1.6rem;font-weight:700}
+.steps{display:flex;gap:6px;flex-wrap:wrap}
+.steps span{background:#eef2f5;border-radius:5px;padding:4px 8px}
+</style>
+</head>
+<body>
+<main>
+<h1>System Design Lab</h1>
+<p class="lead">Three small systems, running in your browser with the same logic as the Python code in this repo. Click around, break things, then run the real Flask versions.</p>
+
+<nav role="tablist">
+<button role="tab" aria-selected="true" data-t="t1">URL shortener</button>
+<button role="tab" aria-selected="false" data-t="t2">Rate limiter</button>
+<button role="tab" aria-selected="false" data-t="t3">Load balancer</button>
+</nav>
+
+<!-- TASK 1 -->
+<section id="t1" class="on">
+<div class="card">
+<h3>POST /shorten</h3>
+<div class="row"><input id="u" class="grow" value="https://www.google.com/search?q=system+design" aria-label="Long URL"><button class="btn" id="shorten">Shorten</button></div>
+<p class="note">Try "hello" to see the 400 error. Each new URL gets the next database ID, and the short ID is that number written in Base62.</p>
+</div>
+<div class="card"><h3>How the short ID is built</h3><div id="b62" class="steps mono"><span>Shorten a URL to see the steps</span></div></div>
+<div class="card"><h3>GET /&lt;short_id&gt;</h3>
+<div class="row"><input id="sid" placeholder="e.g. 1" aria-label="Short ID"><button class="btn alt" id="visit">Visit</button></div></div>
+<div class="card"><h3>Response</h3><pre id="r1" class="dim">Waiting for a request...</pre></div>
+<div class="card"><h3>Database (urls table)</h3><table><thead><tr><th>id</th><th>short_id</th><th>long_url</th></tr></thead><tbody id="db"><tr><td colspan="3" class="dim">empty</td></tr></tbody></table>
+<p class="note">Tip: shorten about 62 URLs and watch the ID grow from one character to two.</p></div>
+</section>
+
+<!-- TASK 2 -->
+<section id="t2">
+<div class="card">
+<h3>GET /data</h3>
+<div class="row">
+<label>User <select id="user"><option>alice</option><option>bob</option></select></label>
+<label>Limit <select id="lim"><option>5</option><option>3</option><option>10</option></select> requests per</label>
+<label><select id="win"><option value="60">60 s</option><option value="20">20 s</option><option value="10">10 s</option></select></label>
+<button class="btn" id="send2">Send request</button>
+<button class="btn alt" id="reset2">Reset</button>
+</div>
+<p class="note">Sliding window log: each user keeps a list of timestamps. Old ones drop out as the window moves, so blocked users get in again without a reset.</p>
+</div>
+<div class="card"><h3>Window for <span id="who">alice</span> (right edge is now)</h3>
+<div class="track" id="track"></div>
+<div class="row mono"><span id="cnt">0 of 5 used</span></div></div>
+<div class="card"><h3>Responses</h3><pre id="r2" class="dim">Send a request.</pre></div>
+</section>
+
+<!-- TASK 3 -->
+<section id="t3">
+<div class="card">
+<h3>Round robin on port 8000</h3>
+<div class="row"><button class="btn" id="send3">Send 1 request</button><button class="btn alt" id="send9">Send 9 requests</button><button class="btn alt" id="reset3">Reset counter</button></div>
+<p class="note">Next request starts at server <b id="nxt">1</b>. Switch a server off to see the balancer skip to the next one (the bonus failover in the code).</p>
+</div>
+<div class="row" id="srvs"></div>
+<div class="card" style="margin-top:14px"><h3>Balancer log</h3><pre id="r3" class="dim">Send a request.</pre></div>
+</section>
+</main>
+
+<script>
+const $=s=>document.querySelector(s);
+document.querySelectorAll('nav button').forEach(b=>b.onclick=()=>{
+  document.querySelectorAll('nav button').forEach(x=>x.setAttribute('aria-selected',x===b));
+  document.querySelectorAll('section').forEach(s=>s.classList.toggle('on',s.id===b.dataset.t));
+});
+const esc=s=>String(s).replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
+
+/* ---------- Task 1 ---------- */
+const A="0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";
+const rows=[];
+function b62(n){if(n===0)return{s:A[0],steps:[]};let o=[],st=[];while(n>0){const q=Math.floor(n/62),r=n%62;st.push(`${n} ÷ 62 = ${q} rem ${r} → "${A[r]}"`);o.push(A[r]);n=q}return{s:o.reverse().join(''),steps:st}}
+function valid(u){try{const p=new URL(u);return(p.protocol==='http:'||p.protocol==='https:')&&!!p.host}catch{return false}}
+function show1(status,body,ok){$('#r1').className=ok?'ok':'bad';$('#r1').textContent=status+'\n'+body}
+$('#shorten').onclick=()=>{
+  const u=$('#u').value.trim();
+  if(!u)return show1('400 BAD REQUEST',JSON.stringify({error:"Field 'url' is required"},null,2));
+  if(!valid(u))return show1('400 BAD REQUEST',JSON.stringify({error:"Invalid URL. It must start with http:// or https://"},null,2));
+  const id=rows.length+1,{s,steps}=b62(id);
+  rows.push({id,s,u});
+  $('#b62').innerHTML=`<span>row id = ${id}</span>`+steps.map(x=>`<span>${x}</span>`).join('')+`<span>short_id = ${s}</span>`;
+  show1('201 CREATED',JSON.stringify({short_id:s,short_url:'http://127.0.0.1:5000/'+s,long_url:u},null,2),true);
+  $('#sid').value=s;
+  $('#db').innerHTML=rows.map(r=>`<tr><td>${r.id}</td><td>${esc(r.s)}</td><td>${esc(r.u)}</td></tr>`).join('');
+};
+$('#visit').onclick=()=>{
+  const r=rows.find(x=>x.s===$('#sid').value.trim());
+  if(!r)return show1('404 NOT FOUND',JSON.stringify({error:'Short URL not found'},null,2));
+  show1('302 FOUND','Location: '+r.u+'\n(the browser now follows this link)',true);
+};
+
+/* ---------- Task 2 ---------- */
+const log={};let lines=[];
+const lim=()=>+$('#lim').value,win=()=>+$('#win').value;
+function live(u){const n=Date.now(),s=n-win()*1000;return(log[u]||[]).filter(t=>t>s)}
+$('#send2').onclick=()=>{
+  const u=$('#user').value,n=Date.now(),ts=live(u);
+  if(ts.length>=lim()){
+    const ra=Math.floor((ts[0]+win()*1000-n)/1000)+1;
+    log[u]=ts;
+    lines.unshift(`<span class="bad">${u}: 429 TOO MANY REQUESTS  Retry-After: ${ra}s</span>`);
+    (log.__b=log.__b||[]).push([u,n]);
+  }else{
+    ts.push(n);log[u]=ts;
+    lines.unshift(`<span class="ok">${u}: 200 OK  remaining: ${lim()-ts.length}</span>`);
+  }
+  draw2();
+};
+$('#reset2').onclick=()=>{for(const k in log)delete log[k];lines=[];draw2()};
+$('#user').onchange=draw2;
+function draw2(){
+  const u=$('#user').value,n=Date.now(),W=win()*1000,t=$('#track');
+  $('#who').textContent=u;
+  let h='';
+  live(u).forEach(x=>{h+=`<div class="dot" style="left:calc(${(1-(n-x)/W)*100}% - 7px)"></div>`});
+  (log.__b||[]).filter(([v,x])=>v===u&&n-x<W).forEach(([v,x])=>{h+=`<div class="dot blk" style="left:calc(${(1-(n-x)/W)*100}% - 7px);top:20px;height:16px"></div>`});
+  t.innerHTML=h;
+  $('#cnt').textContent=`${live(u).length} of ${lim()} used in the last ${win()}s (red = blocked attempts)`;
+  $('#r2').innerHTML=lines.slice(0,12).join('\n')||'Send a request.';
+}
+setInterval(draw2,250);draw2();
+
+/* ---------- Task 3 ---------- */
+const S=[{n:1,p:5001,up:true,c:0},{n:2,p:5002,up:true,c:0},{n:3,p:5003,up:true,c:0}];
+let ctr=0,out=[];
+function drawS(hit){
+  $('#srvs').innerHTML=S.map((s,i)=>`<div class="srv ${s.up?'':'down'} ${hit===i?'hit':''}"><b>Server ${s.n}</b><span class="mono dim">:${s.p}</span><div class="n">${s.c}</div><span class="dim">requests served</span><div><button class="btn alt" data-i="${i}" style="margin-top:8px">${s.up?'Turn off':'Turn on'}</button></div></div>`).join('');
+  document.querySelectorAll('.srv button').forEach(b=>b.onclick=()=>{S[b.dataset.i].up=!S[b.dataset.i].up;drawS()});
+  $('#nxt').textContent=(ctr%3)+1;
+  $('#r3').innerHTML=out.slice(0,14).join('\n')||'Send a request.';
+}
+function one(){
+  const start=ctr++%3;
+  for(let a=0;a<3;a++){
+    const i=(start+a)%3,s=S[i];
+    if(s.up){s.c++;out.unshift(`<span class="ok">[LB] GET /  ->  :${s.p}  Hello from Server ${s.n}!</span>`);return i}
+    out.unshift(`<span class="bad">[LB] :${s.p} is DOWN, trying next server...</span>`);
+  }
+  out.unshift('<span class="bad">503 Service Unavailable: all backend servers are down.</span>');return -1;
+}
+$('#send3').onclick=()=>drawS(one());
+$('#send9').onclick=()=>{let h=-1;for(let k=0;k<9;k++)h=one();drawS(h)};
+$('#reset3').onclick=()=>{ctr=0;out=[];S.forEach(s=>s.c=0);drawS()};
+drawS();
+</script>
+</body>
+</html>
